@@ -16,7 +16,7 @@ A command line tool to archive mails on IMAP servers.
     -m, --months=N                   Keep messages for N months
     -d, --delete                     Delete old mails
     -s, --[no-]ssl                   Use imaps
-    -x, --ssl-no-verify              Use imaps
+    -x, --ssl-no-verify              Do not verify certificates
 
 ## License
 
