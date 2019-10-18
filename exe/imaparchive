@@ -1,0 +1,102 @@
+#!/home/shugo/local/bin/ruby
+
+require "optparse"
+require "net/imap"
+require "io/console"
+require "ostruct"
+require "date"
+require "pp"
+require "progressbar"
+
+def get_password
+  io = IO.console
+  io.print("Password: ")
+  io.flush
+  s = io.noecho {
+    io.gets.chomp
+  }
+  io.puts
+  return s
+end
+
+conf = OpenStruct.new
+conf.user = ENV["USER"]
+conf.auth_type = "PLAIN"
+conf.mailbox = "INBOX"
+conf.imap_options = {}
+conf.archive_prefix = "archive/"
+conf.months = 3
+conf.delete = false
+opt_parser = OptionParser.new do |opts|
+  opts.banner = "Usage: imaparchive [options] <hostname>"
+
+  opts.on("-u", "--user=USER", "Username") do |u|
+    conf.user = u
+  end
+  opts.on("-m", "--mailbox=MAILBOX", "Mailbox name") do |mbx|
+    conf.mailbox = mbx
+  end
+  opts.on("-a", "--archive-prefix=PREFIX", "Archive prefix") do |prefix|
+    conf.archive_prefix = prefix
+  end
+  opts.on("-m", "--months=N", "Keep messages for N months") do |prefix|
+    conf.months = 3
+  end
+  opts.on("-d", "--delete", "Delete old mails") do |arg|
+    conf.delete = arg
+  end
+  opts.on("-s", "--[no-]ssl", "Use imaps") do |val|
+    conf.imap_options[:ssl] = val
+  end
+  opts.on("-x", "--ssl-no-verify", "Do not verify certificates") do |val|
+    conf.imap_options[:ssl] = {
+      :verify_mode => OpenSSL::SSL::VERIFY_NONE
+    }
+  end
+  opts.on("-t", "--auth-type=TYPE", "IMAP auth type") do |type|
+    conf.auth_type = type
+  end
+end
+opt_parser.parse!
+if ARGV.length == 0
+  STDERR.print(opt_parser.help)
+  exit 1
+end
+conf.host = ARGV[0]
+conf.password = get_password
+
+#Net::IMAP.debug = true
+imap = Net::IMAP.new(conf.host, conf.imap_options)
+imap.authenticate(conf.auth_type, conf.user, conf.password)
+imap.select(conf.mailbox)
+date = Date.today << conf.months
+uids = imap.uid_search(["BEFORE", Net::IMAP.format_date(date),
+#                        "SEEN", "NOT", "DELETED"])
+                        "NOT", "DELETED"])
+if uids.empty?
+  puts "No old mails"
+  exit
+end
+if conf.delete
+  puts "Deleting #{uids.length} messages..."
+else
+  archive_mailbox = conf.archive_prefix + File.basename(conf.mailbox) +
+    date.strftime("-%Y%m%d")
+  unless imap.list("", archive_mailbox)
+    imap.create(archive_mailbox)
+  end
+  puts "Archiving #{uids.length} messages to #{archive_mailbox}..."
+end
+unit = 1000
+pbar = ProgressBar.create(title: conf.mailbox,
+                          total: (uids.length.to_f / unit).ceil)
+uids.each_slice(unit) do |set|
+  unless conf.delete
+    imap.uid_copy(set, archive_mailbox)
+  end
+  imap.uid_store(set, "+FLAGS", [:Deleted])
+  pbar.increment
+end
+pbar.finish
+imap.expunge
+puts "Done"
